@@ -13,7 +13,7 @@ from flask import Flask
 # ================= SERVER MỒI (RENDER) =================
 app = Flask(__name__)
 @app.route('/')
-def home(): return "<h1>XOCDIA88 PREDICT AI - STATUS: ONLINE</h1>"
+def home(): return "<h1>XOCDIA88 PREDICT - STATUS: ONLINE</h1>"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -117,11 +117,39 @@ def welcome(message):
     
     welcome_text = (
         f"👋 **Chào mừng {message.from_user.first_name}!**\n"
-        f"Hệ thống **XOCDIA88 PREDICT AI** - Đẳng cấp soi cầu 🦅\n"
+        f"Hệ thống **XOCDIA88 AI** - Soi cầu đẳng cấp 🦅\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💡 Nhấn **💳 NẠP VIP** hoặc **🎁 NHẬP CODE** để bắt đầu."
     )
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_keyboard(uid), parse_mode="Markdown")
+
+# ================= SOI CẦU (FIX THEO API TÀI XỈU) =================
+def auto_predict(chat_id, uid, api_url, mode):
+    last_p = ""
+    while users_db.get(uid, {}).get('is_running'):
+        try:
+            res = requests.get(api_url, timeout=10).json()
+            # Lấy số phiên từ trường 'phien hien tai' trong API của bạn
+            p = str(res.get('phien hien tai', ''))
+            
+            if p != last_p and p != "":
+                last_p = p
+                # Lấy trực tiếp dự đoán từ trường 'du doan' (Tài hoặc Xỉu)
+                kq = str(res.get('du doan', 'Đang tính...')).upper()
+                
+                # Gán icon cho đẹp
+                icon = "🔴 TÀI" if "TÀI" in kq else "⚪ XỈU"
+                
+                msg = (
+                    f"🦅 **XOCDIA88 | {mode}**\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"🔹 Phiên: `{p}`\n"
+                    f"🔮 Dự đoán: **{icon}**\n"
+                    f"━━━━━━━━━━━━━━━━━━"
+                )
+                bot.send_message(chat_id, msg, parse_mode="Markdown")
+        except: pass
+        time.sleep(10)
 
 # ================= XỬ LÝ TIN NHẮN =================
 @bot.message_handler(func=lambda m: True)
@@ -141,9 +169,6 @@ def handle_all_messages(message):
         m = bot.send_message(message.chat.id, "👉 Vui lòng nhập Giftcode của bạn:")
         bot.register_next_step_handler(m, process_redeem_code)
 
-    elif message.text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
-        admin_panel(message)
-
     elif "SOI CẦU" in message.text:
         exp = users_db.get(uid, {}).get('expire_date')
         if not exp or exp < datetime.now():
@@ -153,14 +178,17 @@ def handle_all_messages(message):
         url = API_TX if mode == "TÀI XỈU" else API_MD5
         
         users_db[uid]['is_running'] = True
-        bot.send_message(message.chat.id, f"🚀 Khởi động AI **XOCDIA88** ({mode})...", parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"🚀 Khởi động AI **XOCDIA88** ({mode})...")
         threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
 
     elif message.text == '🛑 DỪNG TOOL':
         if uid in users_db: users_db[uid]['is_running'] = False
         bot.send_message(message.chat.id, "🛑 Đã dừng.")
 
-# ================= LOGIC GIFTCODE =================
+    elif message.text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
+        admin_panel(message)
+
+# ================= QUẢN TRỊ & GIFTCODE =================
 def process_redeem_code(message):
     uid = str(message.from_user.id)
     code = message.text.strip()
@@ -175,58 +203,24 @@ def process_redeem_code(message):
         save_codes(codes)
         bot.send_message(message.chat.id, f"✅ Thành công! Bạn được cộng {days} ngày VIP.")
     else:
-        bot.send_message(message.chat.id, "❌ Code không tồn tại hoặc đã sử dụng.")
+        bot.send_message(message.chat.id, "❌ Code không tồn tại.")
 
-# ================= SOI CẦU (FIX LOGIC TÀI/XỈU) =================
-def auto_predict(chat_id, uid, api_url, mode):
-    last_p = ""
-    while users_db.get(uid, {}).get('is_running'):
-        try:
-            res = requests.get(api_url, timeout=10).json()
-            p = str(res.get('phien', ''))
-            
-            if p != last_p:
-                last_p = p
-                # Lấy kết quả dự đoán từ API
-                kq_raw = str(res.get('du doan', '')).upper()
-                
-                # Logic hiển thị theo đúng API Tài Xỉu
-                if "TÀI" in kq_raw:
-                    icon = "🔴 TÀI"
-                elif "XỈU" in kq_raw:
-                    icon = "⚪ XỈU"
-                else:
-                    icon = f"❓ {kq_raw}"
-                
-                bot.send_message(chat_id, f"🦅 **XOCDIA88 - {mode}**\n━━━━━━━━━━━━━\nPhiên: `{p}`\n🔮 Dự đoán: **{icon}**", parse_mode="Markdown")
-        except Exception as e:
-            print(f"Error: {e}")
-        time.sleep(12)
-
-# ================= ADMIN PANEL =================
 def admin_panel(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📊 Thống Kê", callback_data="ad_stats"),
         types.InlineKeyboardButton("🎫 Tạo Code", callback_data="ad_gen_code"),
-        types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add_day"),
-        types.InlineKeyboardButton("📢 Thông Báo", callback_data="ad_bc")
+        types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add_day")
     )
     bot.send_message(message.chat.id, "👑 **ADMIN PANEL**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
 def callback_admin(call):
     if call.data == "ad_stats":
-        bot.send_message(call.message.chat.id, f"👥 User: {len(users_db)}\n🎫 Code trống: {len(load_codes())}")
+        bot.send_message(call.message.chat.id, f"👥 User: {len(users_db)}\n🎫 Code: {len(load_codes())}")
     elif call.data == "ad_gen_code":
-        m = bot.send_message(call.message.chat.id, "👉 Nhập số ngày cho code này:")
-        bot.register_next_step_handler(m, process_gen_code)
-    elif call.data == "ad_add_day":
-        m = bot.send_message(call.message.chat.id, "👉 Nhập: `ID SO_NGAY` (VD: `7816353760 30`)")
-        bot.register_next_step_handler(m, process_admin_add)
-    elif call.data == "ad_bc":
-        m = bot.send_message(call.message.chat.id, "📣 Nhập nội dung thông báo:")
-        bot.register_next_step_handler(m, process_admin_bc)
+        m = bot.send_message(call.message.chat.id, "👉 Nhập số ngày:")
+        bot.register_next_step_handler(m, lambda msg: process_gen_code(msg))
 
 def process_gen_code(message):
     try:
@@ -235,30 +229,11 @@ def process_gen_code(message):
         codes = load_codes()
         codes[code] = days
         save_codes(codes)
-        bot.send_message(message.chat.id, f"🎫 Code mới: `{code}`\n⏳ Hạn: {days} ngày", parse_mode="Markdown")
-    except: bot.send_message(message.chat.id, "❌ Lỗi.")
-
-def process_admin_add(message):
-    try:
-        u, d = message.text.split()
-        if u not in users_db: users_db[u] = {'expire_date': None, 'is_running': False}
-        now = datetime.now()
-        start = users_db[u]['expire_date'] if users_db[u]['expire_date'] and users_db[u]['expire_date'] > now else now
-        users_db[u]['expire_date'] = start + timedelta(days=int(d))
-        save_data()
-        bot.send_message(message.chat.id, "✅ Xong.")
-        bot.send_message(u, f"🎁 Admin tặng bạn {d} ngày VIP!")
-    except: bot.send_message(message.chat.id, "❌ Sai định dạng.")
-
-def process_admin_bc(message):
-    for u in users_db:
-        try: bot.send_message(u, f"📣 **TB ADMIN XOCDIA88:**\n\n{message.text}")
-        except: continue
-    bot.send_message(message.chat.id, "✅ Đã gửi.")
+        bot.send_message(message.chat.id, f"🎫 Code: `{code}` ({days} ngày)", parse_mode="Markdown")
+    except: pass
 
 # ================= RUN =================
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     threading.Thread(target=check_bank_auto, daemon=True).start()
     bot.infinity_polling()
-        
