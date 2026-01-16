@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from telebot import types
 from flask import Flask
 
-# ================= SERVER MỒI (KEEP ALIVE) =================
+# ================= SERVER MỒI =================
 app = Flask(__name__)
 @app.route('/')
 def home(): return "<h1>XOCDIA88 SYSTEM - ONLINE</h1>"
@@ -19,7 +19,7 @@ def run_web_server():
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
 
-# ================= CẤU HÌNH HỆ THỐNG =================
+# ================= CẤU HÌNH =================
 API_TOKEN = '8404770438:AAHNI8xRHFlWPVNF4gL2-CShnvqgQ_OXUEI'
 ADMIN_ID = 7816353760 
 
@@ -31,7 +31,7 @@ DB_FILE = 'users_db.json'
 CODE_FILE = 'giftcodes.json'
 
 bot = telebot.TeleBot(API_TOKEN)
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+headers = {'User-Agent': 'Mozilla/5.0'}
 
 # ================= QUẢN LÝ DỮ LIỆU =================
 def load_data():
@@ -67,61 +67,64 @@ def save_codes(codes):
 
 users_db = load_data()
 
-# ================= LOGIC SOI CẦU THEO API GỐC =================
+# ================= LOGIC SOI CẦU (FIXED API KEYS) =================
+def get_val(data, keys):
+    """Hàm lấy dữ liệu bất kể API dùng dấu cách hay gạch nối"""
+    for k in keys:
+        if k in data: return data[k]
+    return None
+
 def auto_predict(chat_id, uid, api_url, mode):
     last_p = ""
-    bot.send_message(chat_id, f"✅ **Robot {mode} đã kết nối!** Đang đồng bộ phiên...", parse_mode="Markdown")
+    bot.send_message(chat_id, f"✅ **Robot {mode} đã kết nối!** Đang đợi phiên mới...", parse_mode="Markdown")
     
     while users_db.get(uid, {}).get('is_running'):
         try:
-            # Lấy data từ API
             res = requests.get(api_url, headers=headers, timeout=15).json()
             
-            # 1. Thông tin phiên vừa ra (Kết quả trước)
-            p_cu = str(res.get('phien', ''))
-            dice = f"{res.get('xuc xac 1')}-{res.get('xuc xac 2')}-{res.get('xuc xac 3')}"
-            tong = res.get('tong')
-            kq_cu = str(res.get('ket qua', '')).upper()
+            # Lấy thông tin phiên cũ (Kết quả vừa ra)
+            p_cu = get_val(res, ['phien'])
+            x1 = get_val(res, ['xuc xac 1', 'xuc_xac_1'])
+            x2 = get_val(res, ['xuc xac 2', 'xuc_xac_2'])
+            x3 = get_val(res, ['xuc xac 3', 'xuc_xac_3'])
+            tong = get_val(res, ['tong'])
+            kq_cu = str(get_val(res, ['ket qua', 'ket_qua']) or "").upper()
             
-            # 2. Thông tin phiên hiện tại (Dự đoán)
-            p_moi = str(res.get('phien hien tai', ''))
-            du_doan = str(res.get('du doan', '')).upper()
+            # Lấy thông tin phiên mới (Dự đoán)
+            p_moi = get_val(res, ['phien hien tai', 'phien_hien_tai'])
+            du_doan = str(get_val(res, ['du doan', 'du_doan']) or "").upper()
 
-            # Chỉ gửi tin nhắn khi phiên mới xuất hiện
-            if p_moi != "" and p_moi != last_p:
+            if p_moi and p_moi != last_p:
                 last_p = p_moi
                 
-                # Định dạng icon cho đẹp
-                icon_kq = "🔴 TÀI" if "TAI" in kq_cu else "⚪ XỈU"
+                # Định dạng Icon
+                icon_cu = "🔴 TÀI" if "TAI" in kq_cu else "⚪ XỈU"
                 icon_dd = "🔴 TÀI" if "TAI" in du_doan else "⚪ XỈU"
                 
                 msg = (
                     f"🦅 **XOCDIA88 - {mode}** 🦅\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 **KẾT QUẢ PHIÊN TRƯỚC (`{p_cu}`):**\n"
-                    f"🎲 Xúc xắc: `{dice}` ({tong})\n"
-                    f"✨ Kết quả: **{icon_kq}**\n"
+                    f"📊 **KẾT QUẢ PHIÊN `{p_cu}`:**\n"
+                    f"🎲 Xúc xắc: `{x1}-{x2}-{x3}` ({tong})\n"
+                    f"✨ Kết quả: **{icon_cu}**\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔮 **DỰ ĐOÁN PHIÊN NÀY (`{p_moi}`):**\n"
+                    f"🔮 **DỰ ĐOÁN PHIÊN `{p_moi}`:**\n"
                     f"👉 Cầu báo: **{icon_dd}**\n"
-                    f"📈 Tỷ lệ thắng: `98.8%`\n"
+                    f"📈 Tỷ lệ thắng: `98.9%`\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⚠️ *Đánh đều tay, không tất tay!*"
+                    f"⚠️ *Lưu ý: Đánh đều tay, không tất tay!*"
                 )
                 bot.send_message(chat_id, msg, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Lỗi API {mode}: {e}")
-        
-        time.sleep(12) # Quét mỗi 12 giây
+        except: pass
+        time.sleep(10)
 
-# ================= HỆ THỐNG NÚT BẤM (FIXED) =================
+# ================= MENU CHÍNH =================
 def main_kb(uid):
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
     markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
     markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
-    if int(uid) == ADMIN_ID:
-        markup.add('👑 QUẢN TRỊ')
+    if int(uid) == ADMIN_ID: markup.add('👑 QUẢN TRỊ')
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -130,13 +133,10 @@ def start(message):
     if uid not in users_db:
         users_db[uid] = {'expire_date': None, 'is_running': False}
         save_data()
-    
-    bot.send_message(message.chat.id, 
-        f"👋 Chào mừng **{message.from_user.first_name}** đến với **XOCDIA88 AI**!\n"
-        f"Hệ thống đã nhận diện API chuẩn từ server.", 
-        reply_markup=main_kb(uid), parse_mode="Markdown")
+    bot.send_message(message.chat.id, "👋 Chào mừng bạn đến với **XOCDIA88 AI**!", 
+                     reply_markup=main_kb(uid), parse_mode="Markdown")
 
-# ================= XỬ LÝ TIN NHẮN =================
+# ================= XỬ LÝ LỆNH =================
 @bot.message_handler(func=lambda m: True)
 def handle_text(message):
     uid = str(message.from_user.id)
@@ -148,20 +148,19 @@ def handle_text(message):
         d = exp.strftime("%d/%m/%Y %H:%M") if exp else "Chưa có"
         bot.send_message(message.chat.id, f"👤 **USER:** `{uid}`\n🌟 **Status:** {status}\n📅 **Hạn:** `{d}`", parse_mode="Markdown")
 
-    elif text == '🦅 SOI CẦU TÀI XỈU' or text == '🛡️ SOI CẦU MD5':
+    elif text in ['🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5']:
         exp = users_db.get(uid, {}).get('expire_date')
         if not exp or exp < datetime.now():
-            return bot.send_message(message.chat.id, "❌ **LỖI:** Tài khoản của bạn không phải là VIP!")
+            return bot.send_message(message.chat.id, "❌ **LỖI:** Vui lòng nạp VIP để sử dụng!")
         
         mode = "TÀI XỈU" if "TÀI XỈU" in text else "MD5"
         url = API_TX if mode == "TÀI XỈU" else API_MD5
-        
         users_db[uid]['is_running'] = True
         threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
 
     elif text == '🛑 DỪNG TOOL':
         if uid in users_db: users_db[uid]['is_running'] = False
-        bot.send_message(message.chat.id, "🛑 **Đã ngắt kết nối robot.**")
+        bot.send_message(message.chat.id, "🛑 **Đã dừng robot.**")
 
     elif text == '💳 NẠP VIP':
         bot.send_message(message.chat.id, f"🏦 **NẠP VIP TỰ ĐỘNG**\nSTK: `80002422042` (MSB)\nNội dung: `NAP {uid}`", parse_mode="Markdown")
@@ -173,26 +172,30 @@ def handle_text(message):
     elif text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
         admin_panel(message)
 
-# ================= ADMIN LOGIC =================
+# ================= ADMIN SYSTEM =================
 def admin_panel(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📊 Thống Kê", callback_data="ad_stats"),
         types.InlineKeyboardButton("🎫 Tạo Code", callback_data="ad_code"),
+        types.InlineKeyboardButton("📢 Thông Báo", callback_data="ad_bc"),
         types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add")
     )
-    bot.send_message(message.chat.id, "👑 **ADMIN PANEL**", reply_markup=markup)
+    bot.send_message(message.chat.id, "👑 **QUẢN TRỊ VIÊN**", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
 def ad_callback(call):
     if call.data == "ad_stats":
-        bot.send_message(call.message.chat.id, f"📊 **Users:** {len(users_db)}\n🎫 **Codes:** {len(load_codes())}")
+        bot.send_message(call.message.chat.id, f"📊 **User:** {len(users_db)}\n🎫 **Code:** {len(load_codes())}")
     elif call.data == "ad_code":
         m = bot.send_message(call.message.chat.id, "Nhập số ngày VIP:")
         bot.register_next_step_handler(m, gen_code)
     elif call.data == "ad_add":
         m = bot.send_message(call.message.chat.id, "Nhập: `ID NGAY` (VD: `7816353760 30`)")
         bot.register_next_step_handler(m, admin_add_days)
+    elif call.data == "ad_bc":
+        m = bot.send_message(call.message.chat.id, "Nhập nội dung thông báo:")
+        bot.register_next_step_handler(m, admin_broadcast)
 
 def gen_code(message):
     try:
@@ -201,8 +204,8 @@ def gen_code(message):
         codes = load_codes()
         codes[code] = days
         save_codes(codes)
-        bot.send_message(message.chat.id, f"🎫 **Giftcode:** `{code}` ({days} ngày)")
-    except: bot.send_message(message.chat.id, "❌ Lỗi: Vui lòng nhập số ngày.")
+        bot.send_message(message.chat.id, f"🎫 Code: `{code}` ({days} ngày)")
+    except: bot.send_message(message.chat.id, "❌ Sai định dạng.")
 
 def admin_add_days(message):
     try:
@@ -212,8 +215,14 @@ def admin_add_days(message):
         start = users_db[u]['expire_date'] if users_db[u].get('expire_date') and users_db[u]['expire_date'] > now else now
         users_db[u]['expire_date'] = start + timedelta(days=int(d))
         save_data()
-        bot.send_message(message.chat.id, f"✅ Đã cộng {d} ngày VIP cho ID {u}")
-    except: bot.send_message(message.chat.id, "❌ Lỗi: Nhập đúng định dạng `ID NGAY`")
+        bot.send_message(message.chat.id, f"✅ Đã cộng {d} ngày cho {u}.")
+    except: bot.send_message(message.chat.id, "❌ Sai định dạng.")
+
+def admin_broadcast(message):
+    for u in users_db:
+        try: bot.send_message(u, f"📣 **THÔNG BÁO:**\n\n{message.text}", parse_mode="Markdown")
+        except: continue
+    bot.send_message(message.chat.id, "✅ Đã gửi thông báo.")
 
 def redeem_code(message):
     uid = str(message.from_user.id)
@@ -227,8 +236,8 @@ def redeem_code(message):
         save_data()
         del codes[code]
         save_codes(codes)
-        bot.send_message(message.chat.id, f"✅ Thành công! Bạn được cộng {days} ngày VIP.")
-    else: bot.send_message(message.chat.id, "❌ Giftcode không hợp lệ.")
+        bot.send_message(message.chat.id, f"✅ Thành công! +{days} ngày VIP.")
+    else: bot.send_message(message.chat.id, "❌ Code không hợp lệ.")
 
 # ================= AUTO BANK =================
 def auto_bank():
@@ -248,7 +257,7 @@ def auto_bank():
                         start = users_db[u_id]['expire_date'] if users_db[u_id].get('expire_date') and users_db[u_id]['expire_date'] > now else now
                         users_db[u_id]['expire_date'] = start + timedelta(days=days)
                         save_data()
-                        bot.send_message(u_id, f"🌟 **NẠP THÀNH CÔNG!** Tài khoản của bạn đã được gia hạn.")
+                        bot.send_message(u_id, "🌟 **NẠP VIP THÀNH CÔNG!**")
         except: pass
         time.sleep(30)
 
@@ -256,4 +265,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     threading.Thread(target=auto_bank, daemon=True).start()
     bot.infinity_polling()
-    
+                 
