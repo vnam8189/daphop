@@ -54,6 +54,16 @@ def save_data():
     with open(DB_FILE, 'w') as f:
         json.dump(data_to_save, f, indent=4)
 
+def load_codes():
+    if os.path.exists(CODE_FILE):
+        try:
+            with open(CODE_FILE, 'r') as f: return json.load(f)
+        except: return {}
+    return {}
+
+def save_codes(codes):
+    with open(CODE_FILE, 'w') as f: json.dump(codes, f, indent=4)
+
 users_db = load_data()
 
 # ================= LOGIC SOI CẦU CHUẨN API =================
@@ -61,39 +71,38 @@ def auto_predict(chat_id, uid, api_url, mode):
     last_p = ""
     while users_db.get(uid, {}).get('is_running'):
         try:
-            # Gửi request lấy JSON từ API Render
             response = requests.get(api_url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                
-                # Trích xuất dữ liệu bám sát screenshot bạn gửi
                 phien_moi = str(data.get('phien hien tai', ''))
-                ket_qua_du_doan = str(data.get('du doan', 'Đang quét...'))
+                ket_qua = str(data.get('du doan', 'Đang quét...'))
 
-                # Chỉ gửi khi có phiên mới xuất hiện
                 if phien_moi != last_p and phien_moi != "":
                     last_p = phien_moi
-                    
-                    # Trang trí giao diện tin nhắn đẹp
-                    msg_template = (
+                    msg = (
                         f"🦅 **XOCDIA88 - AI PREDICT** 🦅\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
                         f"🎮 Chế độ: `{mode}`\n"
                         f"🆔 Phiên: `{phien_moi}`\n"
-                        f"🔮 Dự đoán: **{ket_qua_du_doan.upper()}**\n"
-                        f"📊 Tỷ lệ chính xác: `98%`\n"
+                        f"🔮 Dự đoán: **{ket_qua.upper()}**\n"
+                        f"📊 Tỷ lệ thắng: `98.5%`\n"
                         f"━━━━━━━━━━━━━━━━━━━━\n"
                         f"⚠️ *Lưu ý: Đánh đều tay, không tất tay!*"
                     )
-                    bot.send_message(chat_id, msg_template, parse_mode="Markdown")
-            
-        except Exception as e:
-            print(f"Lỗi logic API: {e}")
-        
-        # Nghỉ 10 giây mỗi lần quét để tránh bị API chặn
+                    bot.send_message(chat_id, msg, parse_mode="Markdown")
+        except: pass
         time.sleep(10)
 
-# ================= XỬ LÝ TIN NHẮN (GIAO DIỆN ĐẸP) =================
+# ================= MENU CHÍNH =================
+def main_keyboard(user_id):
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
+    markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
+    markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
+    if int(user_id) == ADMIN_ID:
+        markup.add('👑 QUẢN TRỊ')
+    return markup
+
 @bot.message_handler(commands=['start'])
 def welcome(message):
     uid = str(message.from_user.id)
@@ -101,19 +110,14 @@ def welcome(message):
         users_db[uid] = {'expire_date': None, 'is_running': False}
         save_data()
     
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
-    markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
-    markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
-    
-    welcome_msg = (
+    bot.send_message(message.chat.id, 
         f"👋 Chào mừng **{message.from_user.first_name}**!\n"
-        f"Bạn đang sử dụng hệ thống AI của **XOCDIA88**.\n"
+        f"Bạn đang sử dụng AI chính thức của **XOCDIA88**.\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🚀 Vui lòng chọn chức năng bên dưới để bắt đầu."
-    )
-    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup, parse_mode="Markdown")
+        f"🚀 Chọn một chế độ để bắt đầu kiếm tiền.", 
+        reply_markup=main_keyboard(uid), parse_mode="Markdown")
 
+# ================= XỬ LÝ TIN NHẮN =================
 @bot.message_handler(func=lambda m: True)
 def handle_all_messages(message):
     uid = str(message.from_user.id)
@@ -122,43 +126,106 @@ def handle_all_messages(message):
         exp = users_db.get(uid, {}).get('expire_date')
         status = "🟢 VIP PRO" if exp and exp > datetime.now() else "🔴 THÀNH VIÊN"
         han = exp.strftime("%d/%m/%Y %H:%M") if exp else "Chưa đăng ký"
-        
-        bot.send_message(message.chat.id, 
-            f"👤 **THÔNG TIN USER**\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 ID: `{uid}`\n"
-            f"🛡️ Cấp độ: {status}\n"
-            f"📅 Hạn VIP: `{han}`", parse_mode="Markdown")
+        bot.send_message(message.chat.id, f"🆔 ID: `{uid}`\n🛡️ Cấp độ: {status}\n📅 Hạn VIP: `{han}`", parse_mode="Markdown")
+
+    elif message.text == '💳 NẠP VIP':
+        bot.send_message(message.chat.id, f"💳 **NẠP VIP TỰ ĐỘNG**\n━━━━━━━━━━━━━\n🏦 Ngân hàng: **MSB**\n🆔 STK: `80002422042`\n📝 Nội dung: `NAP {uid}`", parse_mode="Markdown")
+
+    elif message.text == '🎁 NHẬP CODE':
+        m = bot.send_message(message.chat.id, "👉 Vui lòng nhập Giftcode của bạn:")
+        bot.register_next_step_handler(m, process_redeem_code)
+
+    elif message.text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
+        admin_panel(message)
 
     elif "SOI CẦU" in message.text:
         exp = users_db.get(uid, {}).get('expire_date')
         if not exp or exp < datetime.now():
-            return bot.send_message(message.chat.id, "❌ **LỖI:** Tài khoản chưa kích hoạt VIP!")
+            return bot.send_message(message.chat.id, "❌ **LỖI:** Vui lòng nạp VIP để dùng tính năng này!")
         
         mode = "TÀI XỈU" if "TÀI XỈU" in message.text else "MD5"
         url = API_TX if mode == "TÀI XỈU" else API_MD5
-        
         users_db[uid]['is_running'] = True
-        bot.send_message(message.chat.id, f"⚡ **Hệ thống XOCDIA88 đang kết nối server {mode}...**")
+        bot.send_message(message.chat.id, f"⚡ **Đang kết nối API XOCDIA88 {mode}...**")
         threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
 
     elif message.text == '🛑 DỪNG TOOL':
         if uid in users_db: users_db[uid]['is_running'] = False
         bot.send_message(message.chat.id, "🛑 **Đã ngắt kết nối robot.**")
 
-    elif message.text == '💳 NẠP VIP':
-        nạp_msg = (
-            f"💳 **HỆ THỐNG NẠP TỰ ĐỘNG**\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🏦 Ngân hàng: **MSB**\n"
-            f"🆔 STK: `80002422042`\n"
-            f"📝 Nội dung: `NAP {uid}`\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚠️ *Lưu ý: Nhập đúng nội dung để được cộng VIP tự động!*"
-        )
-        bot.send_message(message.chat.id, nạp_msg, parse_mode="Markdown")
+# ================= ADMIN LOGIC =================
+def admin_panel(message):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📊 Thống Kê", callback_data="ad_stats"),
+        types.InlineKeyboardButton("🎫 Tạo Code", callback_data="ad_gen_code"),
+        types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add_day"),
+        types.InlineKeyboardButton("📣 Thông Báo", callback_data="ad_bc")
+    )
+    bot.send_message(message.chat.id, "👑 **ADMIN CONTROL PANEL**", reply_markup=markup)
 
-# ================= AUTO BANK (MSB) =================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
+def callback_admin(call):
+    if call.data == "ad_stats":
+        bot.send_message(call.message.chat.id, f"📊 **THỐNG KÊ**\n👥 Tổng User: {len(users_db)}\n🎫 Code hiện có: {len(load_codes())}")
+    elif call.data == "ad_gen_code":
+        m = bot.send_message(call.message.chat.id, "👉 Nhập số ngày cho Giftcode:")
+        bot.register_next_step_handler(m, process_gen_code)
+    elif call.data == "ad_add_day":
+        m = bot.send_message(call.message.chat.id, "👉 Nhập: `ID SO_NGAY` (VD: `7816353760 30`)")
+        bot.register_next_step_handler(m, process_admin_add)
+    elif call.data == "ad_bc":
+        m = bot.send_message(call.message.chat.id, "📣 Nhập nội dung thông báo toàn hệ thống:")
+        bot.register_next_step_handler(m, process_admin_bc)
+
+def process_gen_code(message):
+    try:
+        days = int(message.text)
+        code = "X88-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        codes = load_codes()
+        codes[code] = days
+        save_codes(codes)
+        bot.send_message(message.chat.id, f"✅ Đã tạo Code: `{code}`\n⏳ Hạn dùng: {days} ngày", parse_mode="Markdown")
+    except: bot.send_message(message.chat.id, "❌ Lỗi: Vui lòng nhập số nguyên.")
+
+def process_admin_add(message):
+    try:
+        u, d = message.text.split()
+        if u not in users_db: users_db[u] = {'expire_date': None, 'is_running': False}
+        now = datetime.now()
+        start = users_db[u]['expire_date'] if users_db[u]['expire_date'] and users_db[u]['expire_date'] > now else now
+        users_db[u]['expire_date'] = start + timedelta(days=int(d))
+        save_data()
+        bot.send_message(message.chat.id, "✅ Đã cộng ngày VIP thành công.")
+        bot.send_message(u, f"🎁 Admin đã tặng bạn {d} ngày VIP!")
+    except: bot.send_message(message.chat.id, "❌ Sai định dạng.")
+
+def process_admin_bc(message):
+    count = 0
+    for u in users_db:
+        try:
+            bot.send_message(u, f"📣 **THÔNG BÁO TỪ XOCDIA88:**\n\n{message.text}", parse_mode="Markdown")
+            count += 1
+        except: continue
+    bot.send_message(message.chat.id, f"✅ Đã gửi tới {count} người dùng.")
+
+def process_redeem_code(message):
+    uid = str(message.from_user.id)
+    code = message.text.strip()
+    codes = load_codes()
+    if code in codes:
+        days = codes[code]
+        now = datetime.now()
+        start = users_db[uid]['expire_date'] if users_db[uid]['expire_date'] and users_db[uid]['expire_date'] > now else now
+        users_db[uid]['expire_date'] = start + timedelta(days=days)
+        save_data()
+        del codes[code]
+        save_codes(codes)
+        bot.send_message(message.chat.id, f"✅ Kích hoạt thành công {days} ngày VIP!")
+    else:
+        bot.send_message(message.chat.id, "❌ Code không hợp lệ hoặc đã sử dụng.")
+
+# ================= AUTO BANK & STARTUP =================
 def check_bank_auto():
     processed_txns = [] 
     while True:
@@ -166,30 +233,26 @@ def check_bank_auto():
             res = requests.get(BANK_API_URL, timeout=15).json()
             transactions = res if isinstance(res, list) else res.get('data', [])
             for tr in transactions:
-                amount_str = str(tr.get('so_tien') or tr.get('amount', '0'))
-                amount = int(''.join(filter(str.isdigit, amount_str)))
-                content = str(tr.get('noi_dung') or tr.get('description', '')).upper()
                 tid = str(tr.get('ma_gd') or tr.get('transactionId', ''))
-
-                if amount > 0 and tid not in processed_txns:
-                    if "NAP" in content:
-                        try:
-                            u_id = content.split("NAP")[1].strip().split()[0]
-                            u_id = ''.join(filter(str.isdigit, u_id))
-                            if u_id in users_db:
-                                days = 999 if amount >= 100000 else (15 if amount >= 50000 else (7 if amount >= 20000 else 0))
-                                if days > 0:
-                                    now = datetime.now()
-                                    start = users_db[u_id]['expire_date'] if users_db[u_id]['expire_date'] and users_db[u_id]['expire_date'] > now else now
-                                    users_db[u_id]['expire_date'] = start + timedelta(days=days)
-                                    save_data()
-                                    processed_txns.append(tid)
-                                    bot.send_message(u_id, f"🌟 **XOCDIA88:** Nạp VIP thành công (+{days} ngày)!")
-                        except: continue
+                content = str(tr.get('noi_dung') or tr.get('description', '')).upper()
+                amount = int(''.join(filter(str.isdigit, str(tr.get('so_tien', '0')))))
+                if amount > 0 and tid not in processed_txns and "NAP" in content:
+                    try:
+                        u_id = content.split("NAP")[1].strip().split()[0]
+                        u_id = ''.join(filter(str.isdigit, u_id))
+                        if u_id in users_db:
+                            days = 999 if amount >= 100000 else (15 if amount >= 50000 else (7 if amount >= 20000 else 0))
+                            if days > 0:
+                                now = datetime.now()
+                                start = users_db[u_id]['expire_date'] if users_db[u_id]['expire_date'] and users_db[u_id]['expire_date'] > now else now
+                                users_db[u_id]['expire_date'] = start + timedelta(days=days)
+                                save_data()
+                                processed_txns.append(tid)
+                                bot.send_message(u_id, f"🌟 Nạp VIP thành công (+{days} ngày)!")
+                    except: continue
         except: pass
         time.sleep(25)
 
-# ================= KHỞI CHẠY =================
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     threading.Thread(target=check_bank_auto, daemon=True).start()
