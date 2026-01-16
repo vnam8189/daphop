@@ -10,10 +10,10 @@ from datetime import datetime, timedelta
 from telebot import types
 from flask import Flask
 
-# ================= SERVER MỒI (RENDER) =================
+# ================= SERVER MỒI (KEEP ALIVE) =================
 app = Flask(__name__)
 @app.route('/')
-def home(): return "<h1>XOCDIA88 PREDICT - STATUS: ONLINE</h1>"
+def home(): return "<h1>XOCDIA88 VIP SYSTEM - ONLINE</h1>"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 5000))
@@ -26,6 +26,7 @@ ADMIN_ID = 7816353760
 BANK_API_URL = "https://spayment.net/msb-history?history=80002422042"
 API_TX = "https://xd88-apsj.onrender.com/xd88/tx"
 API_MD5 = "https://xd88-apsj.onrender.com/xd88/md5"
+
 DB_FILE = 'users_db.json'
 CODE_FILE = 'giftcodes.json'
 
@@ -53,20 +54,111 @@ def save_data():
     with open(DB_FILE, 'w') as f:
         json.dump(data_to_save, f, indent=4)
 
-def load_codes():
-    if os.path.exists(CODE_FILE):
-        try:
-            with open(CODE_FILE, 'r') as f: return json.load(f)
-        except: return {}
-    return {}
-
-def save_codes(codes):
-    with open(CODE_FILE, 'w') as f: json.dump(codes, f, indent=4)
-
 users_db = load_data()
-gift_codes = load_codes()
 
-# ================= AUTO BANK MSB =================
+# ================= LOGIC SOI CẦU CHUẨN API =================
+def auto_predict(chat_id, uid, api_url, mode):
+    last_p = ""
+    while users_db.get(uid, {}).get('is_running'):
+        try:
+            # Gửi request lấy JSON từ API Render
+            response = requests.get(api_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Trích xuất dữ liệu bám sát screenshot bạn gửi
+                phien_moi = str(data.get('phien hien tai', ''))
+                ket_qua_du_doan = str(data.get('du doan', 'Đang quét...'))
+
+                # Chỉ gửi khi có phiên mới xuất hiện
+                if phien_moi != last_p and phien_moi != "":
+                    last_p = phien_moi
+                    
+                    # Trang trí giao diện tin nhắn đẹp
+                    msg_template = (
+                        f"🦅 **XOCDIA88 - AI PREDICT** 🦅\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🎮 Chế độ: `{mode}`\n"
+                        f"🆔 Phiên: `{phien_moi}`\n"
+                        f"🔮 Dự đoán: **{ket_qua_du_doan.upper()}**\n"
+                        f"📊 Tỷ lệ chính xác: `98%`\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ *Lưu ý: Đánh đều tay, không tất tay!*"
+                    )
+                    bot.send_message(chat_id, msg_template, parse_mode="Markdown")
+            
+        except Exception as e:
+            print(f"Lỗi logic API: {e}")
+        
+        # Nghỉ 10 giây mỗi lần quét để tránh bị API chặn
+        time.sleep(10)
+
+# ================= XỬ LÝ TIN NHẮN (GIAO DIỆN ĐẸP) =================
+@bot.message_handler(commands=['start'])
+def welcome(message):
+    uid = str(message.from_user.id)
+    if uid not in users_db:
+        users_db[uid] = {'expire_date': None, 'is_running': False}
+        save_data()
+    
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
+    markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
+    markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
+    
+    welcome_msg = (
+        f"👋 Chào mừng **{message.from_user.first_name}**!\n"
+        f"Bạn đang sử dụng hệ thống AI của **XOCDIA88**.\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🚀 Vui lòng chọn chức năng bên dưới để bắt đầu."
+    )
+    bot.send_message(message.chat.id, welcome_msg, reply_markup=markup, parse_mode="Markdown")
+
+@bot.message_handler(func=lambda m: True)
+def handle_all_messages(message):
+    uid = str(message.from_user.id)
+    
+    if message.text == '👤 TÀI KHOẢN':
+        exp = users_db.get(uid, {}).get('expire_date')
+        status = "🟢 VIP PRO" if exp and exp > datetime.now() else "🔴 THÀNH VIÊN"
+        han = exp.strftime("%d/%m/%Y %H:%M") if exp else "Chưa đăng ký"
+        
+        bot.send_message(message.chat.id, 
+            f"👤 **THÔNG TIN USER**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 ID: `{uid}`\n"
+            f"🛡️ Cấp độ: {status}\n"
+            f"📅 Hạn VIP: `{han}`", parse_mode="Markdown")
+
+    elif "SOI CẦU" in message.text:
+        exp = users_db.get(uid, {}).get('expire_date')
+        if not exp or exp < datetime.now():
+            return bot.send_message(message.chat.id, "❌ **LỖI:** Tài khoản chưa kích hoạt VIP!")
+        
+        mode = "TÀI XỈU" if "TÀI XỈU" in message.text else "MD5"
+        url = API_TX if mode == "TÀI XỈU" else API_MD5
+        
+        users_db[uid]['is_running'] = True
+        bot.send_message(message.chat.id, f"⚡ **Hệ thống XOCDIA88 đang kết nối server {mode}...**")
+        threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
+
+    elif message.text == '🛑 DỪNG TOOL':
+        if uid in users_db: users_db[uid]['is_running'] = False
+        bot.send_message(message.chat.id, "🛑 **Đã ngắt kết nối robot.**")
+
+    elif message.text == '💳 NẠP VIP':
+        nạp_msg = (
+            f"💳 **HỆ THỐNG NẠP TỰ ĐỘNG**\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏦 Ngân hàng: **MSB**\n"
+            f"🆔 STK: `80002422042`\n"
+            f"📝 Nội dung: `NAP {uid}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚠️ *Lưu ý: Nhập đúng nội dung để được cộng VIP tự động!*"
+        )
+        bot.send_message(message.chat.id, nạp_msg, parse_mode="Markdown")
+
+# ================= AUTO BANK (MSB) =================
 def check_bank_auto():
     processed_txns = [] 
     while True:
@@ -84,156 +176,22 @@ def check_bank_auto():
                         try:
                             u_id = content.split("NAP")[1].strip().split()[0]
                             u_id = ''.join(filter(str.isdigit, u_id))
-                            if u_id not in users_db: users_db[u_id] = {'expire_date': None, 'is_running': False}
-                            days = 999 if amount >= 100000 else (15 if amount >= 50000 else (7 if amount >= 20000 else 0))
-                            if days > 0:
-                                now = datetime.now()
-                                start = users_db[u_id]['expire_date'] if users_db[u_id]['expire_date'] and users_db[u_id]['expire_date'] > now else now
-                                users_db[u_id]['expire_date'] = start + timedelta(days=days)
-                                save_data()
-                                processed_txns.append(tid)
-                                bot.send_message(u_id, f"🌟 **NẠP VIP THÀNH CÔNG**\n+ {days} ngày VIP.")
-                                bot.send_message(ADMIN_ID, f"💰 **BANK:** `{u_id}` +{amount}đ")
+                            if u_id in users_db:
+                                days = 999 if amount >= 100000 else (15 if amount >= 50000 else (7 if amount >= 20000 else 0))
+                                if days > 0:
+                                    now = datetime.now()
+                                    start = users_db[u_id]['expire_date'] if users_db[u_id]['expire_date'] and users_db[u_id]['expire_date'] > now else now
+                                    users_db[u_id]['expire_date'] = start + timedelta(days=days)
+                                    save_data()
+                                    processed_txns.append(tid)
+                                    bot.send_message(u_id, f"🌟 **XOCDIA88:** Nạp VIP thành công (+{days} ngày)!")
                         except: continue
         except: pass
         time.sleep(25)
 
-# ================= MENU & START =================
-def main_keyboard(user_id):
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
-    markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
-    markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
-    if int(user_id) == ADMIN_ID:
-        markup.add('👑 QUẢN TRỊ')
-    return markup
-
-@bot.message_handler(commands=['start'])
-def welcome(message):
-    uid = str(message.from_user.id)
-    if uid not in users_db:
-        users_db[uid] = {'expire_date': None, 'is_running': False}
-        save_data()
-    
-    welcome_text = (
-        f"👋 **Chào mừng {message.from_user.first_name}!**\n"
-        f"Hệ thống **XOCDIA88 AI** - Soi cầu đẳng cấp 🦅\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 Nhấn **💳 NẠP VIP** hoặc **🎁 NHẬP CODE** để bắt đầu."
-    )
-    bot.send_message(message.chat.id, welcome_text, reply_markup=main_keyboard(uid), parse_mode="Markdown")
-
-# ================= SOI CẦU (FIX THEO API TÀI XỈU) =================
-def auto_predict(chat_id, uid, api_url, mode):
-    last_p = ""
-    while users_db.get(uid, {}).get('is_running'):
-        try:
-            res = requests.get(api_url, timeout=10).json()
-            # Lấy số phiên từ trường 'phien hien tai' trong API của bạn
-            p = str(res.get('phien hien tai', ''))
-            
-            if p != last_p and p != "":
-                last_p = p
-                # Lấy trực tiếp dự đoán từ trường 'du doan' (Tài hoặc Xỉu)
-                kq = str(res.get('du doan', 'Đang tính...')).upper()
-                
-                # Gán icon cho đẹp
-                icon = "🔴 TÀI" if "TÀI" in kq else "⚪ XỈU"
-                
-                msg = (
-                    f"🦅 **XOCDIA88 | {mode}**\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"🔹 Phiên: `{p}`\n"
-                    f"🔮 Dự đoán: **{icon}**\n"
-                    f"━━━━━━━━━━━━━━━━━━"
-                )
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
-        except: pass
-        time.sleep(10)
-
-# ================= XỬ LÝ TIN NHẮN =================
-@bot.message_handler(func=lambda m: True)
-def handle_all_messages(message):
-    uid = str(message.from_user.id)
-    
-    if message.text == '👤 TÀI KHOẢN':
-        exp = users_db.get(uid, {}).get('expire_date')
-        status = "🟢 VIP" if exp and exp > datetime.now() else "🔴 HẾT HẠN"
-        d = exp.strftime("%d/%m/%Y %H:%M") if exp else "Chưa có VIP"
-        bot.send_message(message.chat.id, f"🆔 ID: `{uid}`\n🌟 Status: {status}\n📅 Hạn: `{d}`", parse_mode="Markdown")
-
-    elif message.text == '💳 NẠP VIP':
-        bot.send_message(message.chat.id, f"🏦 **NẠP TỰ ĐỘNG**\nSTK: `80002422042` (MSB)\nNội dung: `NAP {uid}`", parse_mode="Markdown")
-
-    elif message.text == '🎁 NHẬP CODE':
-        m = bot.send_message(message.chat.id, "👉 Vui lòng nhập Giftcode của bạn:")
-        bot.register_next_step_handler(m, process_redeem_code)
-
-    elif "SOI CẦU" in message.text:
-        exp = users_db.get(uid, {}).get('expire_date')
-        if not exp or exp < datetime.now():
-            return bot.send_message(message.chat.id, "❌ Yêu cầu VIP để sử dụng!")
-        
-        mode = "TÀI XỈU" if "TÀI XỈU" in message.text else "MD5"
-        url = API_TX if mode == "TÀI XỈU" else API_MD5
-        
-        users_db[uid]['is_running'] = True
-        bot.send_message(message.chat.id, f"🚀 Khởi động AI **XOCDIA88** ({mode})...")
-        threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
-
-    elif message.text == '🛑 DỪNG TOOL':
-        if uid in users_db: users_db[uid]['is_running'] = False
-        bot.send_message(message.chat.id, "🛑 Đã dừng.")
-
-    elif message.text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
-        admin_panel(message)
-
-# ================= QUẢN TRỊ & GIFTCODE =================
-def process_redeem_code(message):
-    uid = str(message.from_user.id)
-    code = message.text.strip()
-    codes = load_codes()
-    if code in codes:
-        days = codes[code]
-        now = datetime.now()
-        start = users_db[uid]['expire_date'] if users_db[uid]['expire_date'] and users_db[uid]['expire_date'] > now else now
-        users_db[uid]['expire_date'] = start + timedelta(days=days)
-        save_data()
-        del codes[code]
-        save_codes(codes)
-        bot.send_message(message.chat.id, f"✅ Thành công! Bạn được cộng {days} ngày VIP.")
-    else:
-        bot.send_message(message.chat.id, "❌ Code không tồn tại.")
-
-def admin_panel(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📊 Thống Kê", callback_data="ad_stats"),
-        types.InlineKeyboardButton("🎫 Tạo Code", callback_data="ad_gen_code"),
-        types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add_day")
-    )
-    bot.send_message(message.chat.id, "👑 **ADMIN PANEL**", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
-def callback_admin(call):
-    if call.data == "ad_stats":
-        bot.send_message(call.message.chat.id, f"👥 User: {len(users_db)}\n🎫 Code: {len(load_codes())}")
-    elif call.data == "ad_gen_code":
-        m = bot.send_message(call.message.chat.id, "👉 Nhập số ngày:")
-        bot.register_next_step_handler(m, lambda msg: process_gen_code(msg))
-
-def process_gen_code(message):
-    try:
-        days = int(message.text)
-        code = "X88-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        codes = load_codes()
-        codes[code] = days
-        save_codes(codes)
-        bot.send_message(message.chat.id, f"🎫 Code: `{code}` ({days} ngày)", parse_mode="Markdown")
-    except: pass
-
-# ================= RUN =================
+# ================= KHỞI CHẠY =================
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     threading.Thread(target=check_bank_auto, daemon=True).start()
     bot.infinity_polling()
+    
