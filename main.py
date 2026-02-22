@@ -1,244 +1,267 @@
 import telebot
-import requests
-import time
-import threading
-import json
-import os
-import random
-import string
-from datetime import datetime, timedelta
 from telebot import types
 from flask import Flask
+from threading import Thread
+import os, asyncio, re, random, logging, json
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
-# ================= SERVER MỒI =================
-app = Flask(__name__)
-@app.route('/')
-def home(): return "<h1>XOCDIA88 SYSTEM - ONLINE</h1>"
+# ==========================================
+# 1. CẤU HÌNH HỆ THỐNG (THAY ID TẠI ĐÂY)
+# ==========================================
+API_TOKEN = '8475867709:AAGPINZGRgMnZBRDpNZWPGgBof0fY8N-0D4'
+API_ID = 36437338
+API_HASH = "18d34c7efc396d277f3db62baa078efc"
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+ADMIN_CHINH = [7816353760]  # ID Boss (Toàn quyền quản lý nhóm, thông báo)
+ADMIN_PHU = [6472034224]              # ID CTV (Chỉ được nạp acc và xem mem)
 
-# ================= CẤU HÌNH =================
-API_TOKEN = '8404770438:AAHNI8xRHFlWPVNF4gL2-CShnvqgQ_OXUEI'
-ADMIN_ID = 7816353760 
+MONEY_PER_REF = 3500   
+COST_PER_CODE = 10000  
+BOT_GAME_TARGET = "xocdia88_bot_uytin_bot"
+SESSION_FILE = "sessions.txt"
+DB_FILE = "database.json"
 
-API_TX = "https://xd88-apsj.onrender.com/xd88/tx"
-API_MD5 = "https://xd88-apsj.onrender.com/xd88/md5"
-BANK_API = "https://spayment.net/msb-history?history=80002422042"
+# ==========================================
+# 2. XỬ LÝ DATABASE (LƯU TRỮ TRÁNH MẤT DỮ LIỆU)
+# ==========================================
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "users": {}, 
+        "codes": [],
+        "channels": ['@kiemtienonline48h'],
+        "game_link": "https://xocdia88.ec"
+    }
 
-DB_FILE = 'users_db.json'
-CODE_FILE = 'giftcodes.json'
+def save_db():
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=4, ensure_ascii=False)
+
+db = load_db()
+PENDING_LOGINS = {}
+ACCS = {}
+admin_states = {}
 
 bot = telebot.TeleBot(API_TOKEN)
-headers = {'User-Agent': 'Mozilla/5.0'}
+telethon_loop = asyncio.new_event_loop()
 
-# ================= QUẢN LÝ DỮ LIỆU =================
-def load_data():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r') as f:
-                data = json.load(f)
-                for uid in data:
-                    if data[uid].get('expire_date'):
-                        data[uid]['expire_date'] = datetime.strptime(data[uid]['expire_date'], '%Y-%m-%d %H:%M:%S')
-                return data
-        except: return {}
-    return {}
+# ==========================================
+# 3. WORKER CLONE (AUTO SĂN CODE)
+# ==========================================
+def make_grab_handler(client, name):
+    async def handler(ev):
+        if ev.reply_markup:
+            btn = next((b for r in ev.reply_markup.rows for b in r.buttons if "đập" in b.text.lower()), None)
+            if btn:
+                await asyncio.sleep(random.uniform(0.1, 0.4))
+                try:
+                    await ev.click()
+                    await asyncio.sleep(2.0)
+                    msgs = await client.get_messages(BOT_GAME_TARGET, limit=1)
+                    if msgs and msgs[0].message:
+                        match = re.search(r'là:\s*([A-Z0-9]+)', msgs[0].message)
+                        if match:
+                            code = match.group(1)
+                            if code not in db["codes"]:
+                                db["codes"].append(code)
+                                save_db()
+                                for adm in (ADMIN_CHINH + ADMIN_PHU):
+                                    bot.send_message(adm, f"🎊 **HÚP ĐƯỢC CODE:** `{code}`\n👤 Nguồn: {name}", parse_mode="Markdown")
+                except: pass
+    return handler
 
-def save_data():
-    data_to_save = {}
-    for uid, info in users_db.items():
-        data_to_save[uid] = info.copy()
-        if info.get('expire_date'):
-            data_to_save[uid]['expire_date'] = info['expire_date'].strftime('%Y-%m-%d %H:%M:%S')
-    with open(DB_FILE, 'w') as f:
-        json.dump(data_to_save, f, indent=4)
+async def load_sessions():
+    if os.path.exists(SESSION_FILE):
+        with open(SESSION_FILE, "r") as f:
+            for line in f.read().splitlines():
+                if not line.strip(): continue
+                try:
+                    c = TelegramClient(StringSession(line), API_ID, API_HASH)
+                    await c.connect()
+                    if await c.is_user_authorized():
+                        me = await c.get_me()
+                        ACCS[me.first_name] = c
+                        c.add_event_handler(make_grab_handler(c, me.first_name), events.NewMessage(chats=BOT_GAME_TARGET))
+                except: pass
 
-def load_codes():
-    if os.path.exists(CODE_FILE):
-        try:
-            with open(CODE_FILE, 'r') as f: return json.load(f)
-        except: return {}
-    return {}
-
-def save_codes(codes):
-    with open(CODE_FILE, 'w') as f: json.dump(codes, f, indent=4)
-
-users_db = load_data()
-
-# ================= LOGIC SOI CẦU (FIXED ACCENTS & KEYS) =================
-def get_val(data, keys):
-    for k in keys:
-        if k in data: return data[k]
-    return None
-
-def auto_predict(chat_id, uid, api_url, mode):
-    last_p = ""
-    bot.send_message(chat_id, f"✅ **Robot {mode} đã kết nối!**", parse_mode="Markdown")
-    
-    while users_db.get(uid, {}).get('is_running'):
-        try:
-            res = requests.get(api_url, headers=headers, timeout=15).json()
-            
-            # Lấy thông tin phiên cũ
-            p_cu = get_val(res, ['phien'])
-            x1 = get_val(res, ['xuc xac 1', 'xuc_xac_1'])
-            x2 = get_val(res, ['xuc xac 2', 'xuc_xac_2'])
-            x3 = get_val(res, ['xuc xac 3', 'xuc_xac_3'])
-            tong = get_val(res, ['tong'])
-            kq_cu_raw = str(get_val(res, ['ket qua', 'ket_qua']) or "").upper()
-            
-            # Lấy thông tin dự đoán
-            p_moi = get_val(res, ['phien hien tai', 'phien_hien_tai'])
-            du_doan_raw = str(get_val(res, ['du doan', 'du_doan']) or "").upper()
-
-            if p_moi and str(p_moi) != last_p:
-                last_p = str(p_moi)
-                
-                # FIX LỖI TIẾNG VIỆT: Kiểm tra cả TÀI và TAI
-                icon_cu = "🔴 TÀI" if any(x in kq_cu_raw for x in ["TÀI", "TAI"]) else "⚪ XỈU"
-                icon_dd = "🔴 TÀI" if any(x in du_doan_raw for x in ["TÀI", "TAI"]) else "⚪ XỈU"
-                
-                msg = (
-                    f"🦅 **XOCDIA88 - {mode}** 🦅\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"📊 **KẾT QUẢ PHIÊN `{p_cu}`:**\n"
-                    f"🎲 Xúc xắc: `{x1}-{x2}-{x3}` ({tong})\n"
-                    f"✨ Kết quả: **{icon_cu}**\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🔮 **DỰ ĐOÁN PHIÊN `{p_moi}`:**\n"
-                    f"👉 Cầu báo: **{icon_dd}**\n"
-                    f"📈 Tỷ lệ thắng: `98.9%`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━"
-                )
-                bot.send_message(chat_id, msg, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Error: {e}")
-        time.sleep(10)
-
-# ================= MENU & HANDLERS =================
-def main_kb(uid):
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    markup.add('🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5')
-    markup.add('👤 TÀI KHOẢN', '💳 NẠP VIP')
-    markup.add('🎁 NHẬP CODE', '🛑 DỪNG TOOL')
-    if int(uid) == ADMIN_ID: markup.add('👑 QUẢN TRỊ')
+# ==========================================
+# 4. GIAO DIỆN MENU HỆ THỐNG
+# ==========================================
+def main_menu(uid):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("📊 Thống Kê", "🎁 Rút Giftcode")
+    markup.add("🔗 Link Mời", "🎮 Link Game")
+    if uid in ADMIN_CHINH or uid in ADMIN_PHU:
+        markup.add("🛠 Admin Panel", "📱 Dàn Clone")
+        markup.add("➕ Thêm Clone")
     return markup
 
+def admin_panel_menu(uid):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    if uid in ADMIN_CHINH:
+        markup.add("📢 Gửi Thông Báo", "📢 Quản Lý Nhóm")
+    markup.add("👥 Danh Sách Mem", "🔙 Quay Lại")
+    return markup
+
+def group_manage_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("➕ Thêm Nhóm", "➖ Xóa Nhóm")
+    markup.add("🔙 Quay Lại Admin")
+    return markup
+
+# ==========================================
+# 5. XỬ LÝ SỰ KIỆN CHÍNH
+# ==========================================
 @bot.message_handler(commands=['start'])
 def start(message):
     uid = str(message.from_user.id)
-    if uid not in users_db:
-        users_db[uid] = {'expire_date': None, 'is_running': False}
-        save_data()
-    bot.send_message(message.chat.id, "👋 Chào mừng đến với **XOCDIA88 AI**!", reply_markup=main_kb(uid), parse_mode="Markdown")
+    if uid not in db["users"]:
+        args = message.text.split()
+        referrer = args[1] if len(args) > 1 and args[1].isdigit() else None
+        db["users"][uid] = {'balance': 0, 'invited_by': referrer, 'refs': 0, 'verified': False}
+        save_db()
+    
+    if not db["users"][uid]['verified']:
+        list_groups = "\n".join([f"🔹 {c}" for c in db["channels"]])
+        msg = f"👋 **Chào mừng bạn!**\n\nĐể sử dụng Bot, bạn cần tham gia:\n{list_groups}"
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True).add("✅ Xác Minh Ngay")
+        bot.send_message(message.chat.id, msg, reply_markup=markup, parse_mode="Markdown")
+    else:
+        bot.send_message(message.chat.id, "✨ Hệ thống đã sẵn sàng!", reply_markup=main_menu(int(uid)))
 
-@bot.message_handler(func=lambda m: True)
-def handle_text(message):
-    uid = str(message.from_user.id)
+@bot.message_handler(func=lambda msg: True)
+def handle_all(message):
+    uid_int = message.from_user.id
+    uid = str(uid_int)
     text = message.text
+    state = admin_states.get(uid_int)
 
-    if text == '👤 TÀI KHOẢN':
-        exp = users_db.get(uid, {}).get('expire_date')
-        status = "🟢 VIP" if exp and exp > datetime.now() else "🔴 HẾT HẠN"
-        d = exp.strftime("%d/%m/%Y %H:%M") if exp else "Chưa có"
-        bot.send_message(message.chat.id, f"👤 **ID:** `{uid}`\n🌟 **Status:** {status}\n📅 **Hạn:** `{d}`", parse_mode="Markdown")
+    # --- XỬ LÝ TRẠNG THÁI (STATES) ---
+    if state == "WAIT_PHONE":
+        if text == "❌ Huỷ": admin_states.pop(uid_int); return bot.send_message(uid_int, "Đã huỷ", reply_markup=main_menu(uid_int))
+        bot.send_message(uid_int, "⏳ Đang gửi yêu cầu OTP...")
+        async def ask_code():
+            client = TelegramClient(StringSession(), API_ID, API_HASH)
+            await client.connect()
+            try:
+                sent = await client.send_code_request(text)
+                PENDING_LOGINS[uid_int] = {"p": text, "h": sent.phone_code_hash, "c": client}
+                admin_states[uid_int] = "WAIT_OTP"
+                bot.send_message(uid_int, "📩 **Nhập mã OTP (5 số):**", parse_mode="Markdown")
+            except Exception as e: 
+                bot.send_message(uid_int, f"❌ Lỗi: {e}")
+                admin_states.pop(uid_int)
+        asyncio.run_coroutine_threadsafe(ask_code(), telethon_loop); return
 
-    elif text in ['🦅 SOI CẦU TÀI XỈU', '🛡️ SOI CẦU MD5']:
-        exp = users_db.get(uid, {}).get('expire_date')
-        if not exp or exp < datetime.now():
-            return bot.send_message(message.chat.id, "❌ **LỖI:** Vui lòng nạp VIP!")
-        
-        mode = "TÀI XỈU" if "TÀI XỈU" in text else "MD5"
-        url = API_TX if mode == "TÀI XỈU" else API_MD5
-        users_db[uid]['is_running'] = True
-        threading.Thread(target=auto_predict, args=(message.chat.id, uid, url, mode), daemon=True).start()
+    if state == "WAIT_OTP":
+        data = PENDING_LOGINS.get(uid_int)
+        async def confirm():
+            try:
+                await data["c"].sign_in(data["p"], text, phone_code_hash=data["h"])
+                ss = data["c"].session.save()
+                with open(SESSION_FILE, "a") as f: f.write(ss + "\n")
+                me = await data["c"].get_me()
+                ACCS[me.first_name] = data["c"]
+                data["c"].add_event_handler(make_grab_handler(data["c"], me.first_name), events.NewMessage(chats=BOT_GAME_TARGET))
+                bot.send_message(uid_int, f"✅ Thành công! {me.first_name} đang online.", reply_markup=main_menu(uid_int))
+            except Exception as e: bot.send_message(uid_int, f"❌ Lỗi: {e}")
+            admin_states.pop(uid_int)
+        asyncio.run_coroutine_threadsafe(confirm(), telethon_loop); return
 
-    elif text == '🛑 DỪNG TOOL':
-        if uid in users_db: users_db[uid]['is_running'] = False
-        bot.send_message(message.chat.id, "🛑 **Đã dừng robot.**")
+    if state == "WAIT_ADD_GROUP" and uid_int in ADMIN_CHINH:
+        db["channels"].append(text)
+        save_db()
+        admin_states.pop(uid_int)
+        return bot.send_message(uid_int, f"✅ Đã thêm {text}", reply_markup=group_manage_menu())
 
-    elif text == '💳 NẠP VIP':
-        bot.send_message(message.chat.id, f"🏦 **NẠP VIP TỰ ĐỘNG**\nSTK: `80002422042` (MSB)\nNội dung: `NAP {uid}`", parse_mode="Markdown")
+    if state == "WAIT_DEL_GROUP" and uid_int in ADMIN_CHINH:
+        if text in db["channels"]: db["channels"].remove(text); save_db()
+        admin_states.pop(uid_int)
+        return bot.send_message(uid_int, f"✅ Đã xoá {text}", reply_markup=group_manage_menu())
 
-    elif text == '🎁 NHẬP CODE':
-        m = bot.send_message(message.chat.id, "👉 Nhập Giftcode:")
-        bot.register_next_step_handler(m, redeem_code)
+    if state == "WAIT_BROADCAST" and uid_int in ADMIN_CHINH:
+        admin_states.pop(uid_int)
+        for u in db["users"].keys():
+            try: bot.send_message(u, f"📢 **THÔNG BÁO:**\n\n{text}", parse_mode="Markdown")
+            except: pass
+        return bot.send_message(uid_int, "✅ Đã gửi xong!", reply_markup=admin_panel_menu(uid_int))
 
-    elif text == '👑 QUẢN TRỊ' and int(uid) == ADMIN_ID:
-        admin_panel(message)
+    # --- XỬ LÝ NÚT BẤM ---
+    if text == "✅ Xác Minh Ngay":
+        for channel in db["channels"]:
+            try:
+                if bot.get_chat_member(channel, uid_int).status in ['left', 'kicked']:
+                    return bot.reply_to(message, f"❌ Bạn chưa join: {channel}")
+            except: pass
+        db["users"][uid]['verified'] = True
+        ref_id = db["users"][uid].get('invited_by')
+        if ref_id and str(ref_id) in db["users"]:
+            db["users"][str(ref_id)]['balance'] += MONEY_PER_REF
+            db["users"][str(ref_id)]['refs'] += 1
+        save_db()
+        bot.send_message(uid_int, "✅ Xác minh thành công!", reply_markup=main_menu(uid_int))
 
-# ================= ADMIN & BANK =================
-def admin_panel(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(types.InlineKeyboardButton("📊 Thống Kê", callback_data="ad_stats"),
-               types.InlineKeyboardButton("🎫 Tạo Code", callback_data="ad_code"),
-               types.InlineKeyboardButton("➕ Cộng Ngày", callback_data="ad_add"))
-    bot.send_message(message.chat.id, "👑 **ADMIN PANEL**", reply_markup=markup)
+    elif text == "📊 Thống Kê":
+        u = db["users"].get(uid, {'balance': 0, 'refs': 0})
+        bot.send_message(uid_int, f"👤 **TÀI KHOẢN**\n💰 Số dư: **{u['balance']:,}đ**\n👫 Đã mời: `{u['refs']}`", parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('ad_'))
-def ad_callback(call):
-    if call.data == "ad_stats":
-        bot.send_message(call.message.chat.id, f"📊 **User:** {len(users_db)}")
-    elif call.data == "ad_code":
-        m = bot.send_message(call.message.chat.id, "Nhập số ngày:")
-        bot.register_next_step_handler(m, gen_code)
-    elif call.data == "ad_add":
-        m = bot.send_message(call.message.chat.id, "Nhập: `ID NGAY`")
-        bot.register_next_step_handler(m, admin_add_days)
+    elif text == "🎁 Rút Giftcode":
+        u = db["users"].get(uid)
+        if u['balance'] < COST_PER_CODE: return bot.send_message(uid_int, "❌ Thiếu tiền (Cần 10.000đ)")
+        if not db["codes"]: return bot.send_message(uid_int, "📭 Hết code rồi!")
+        code = db["codes"].pop(0)
+        u['balance'] -= COST_PER_CODE
+        save_db()
+        bot.send_message(uid_int, f"🎁 Giftcode của bạn: `{code}`", parse_mode="Markdown")
 
-def gen_code(message):
-    try:
-        days = int(message.text)
-        code = "X88-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        codes = load_codes(); codes[code] = days; save_codes(codes)
-        bot.send_message(message.chat.id, f"🎫 Code: `{code}` ({days} ngày)")
-    except: bot.send_message(message.chat.id, "❌ Lỗi.")
+    elif text == "🔗 Link Mời":
+        bot.send_message(uid_int, f"🔗 Link: `https://t.me/{bot.get_me().username}?start={uid}`\n🎁 Nhận **{MONEY_PER_REF:,}đ** khi bạn bè xác minh.")
 
-def admin_add_days(message):
-    try:
-        u, d = message.text.split()
-        if u not in users_db: users_db[u] = {'expire_date': None, 'is_running': False}
-        now = datetime.now()
-        start = users_db[u]['expire_date'] if users_db[u].get('expire_date') and users_db[u]['expire_date'] > now else now
-        users_db[u]['expire_date'] = start + timedelta(days=int(d))
-        save_data()
-        bot.send_message(message.chat.id, f"✅ Đã cộng ngày.")
-    except: bot.send_message(message.chat.id, "❌ Lỗi.")
+    elif text == "🛠 Admin Panel" and (uid_int in ADMIN_CHINH or uid_int in ADMIN_PHU):
+        bot.send_message(uid_int, f"🛠 **QUẢN TRỊ**\n📦 Code trong kho: {len(db['codes'])}", reply_markup=admin_panel_menu(uid_int))
 
-def redeem_code(message):
-    uid = str(message.from_user.id); code = message.text.strip(); codes = load_codes()
-    if code in codes:
-        days = codes[code]; now = datetime.now()
-        start = users_db[uid]['expire_date'] if users_db[uid].get('expire_date') and users_db[uid]['expire_date'] > now else now
-        users_db[uid]['expire_date'] = start + timedelta(days=days)
-        save_data(); del codes[code]; save_codes(codes)
-        bot.send_message(message.chat.id, f"✅ Thành công! +{days} ngày.")
-    else: bot.send_message(message.chat.id, "❌ Code sai.")
+    elif text == "📢 Quản Lý Nhóm" and uid_int in ADMIN_CHINH:
+        bot.send_message(uid_int, "📝 Danh sách nhóm:\n" + "\n".join(db["channels"]), reply_markup=group_manage_menu())
 
-def auto_bank():
-    while True:
-        try:
-            res = requests.get(BANK_API, timeout=15).json()
-            txns = res if isinstance(res, list) else res.get('data', [])
-            for tr in txns:
-                content = str(tr.get('noi_dung', '')).upper()
-                amt = int(''.join(filter(str.isdigit, str(tr.get('so_tien', '0')))))
-                if "NAP" in content:
-                    u_id = ''.join(filter(str.isdigit, content.split("NAP")[1]))
-                    if u_id in users_db:
-                        days = 30 if amt >= 100000 else 7
-                        now = datetime.now()
-                        start = users_db[u_id]['expire_date'] if users_db[u_id].get('expire_date') and users_db[u_id]['expire_date'] > now else now
-                        users_db[u_id]['expire_date'] = start + timedelta(days=days)
-                        save_data()
-                        bot.send_message(u_id, "🌟 **NẠP THÀNH CÔNG!**")
-        except: pass
-        time.sleep(30)
+    elif text == "➕ Thêm Nhóm" and uid_int in ADMIN_CHINH:
+        admin_states[uid_int] = "WAIT_ADD_GROUP"
+        bot.send_message(uid_int, "Nhập Username nhóm (VD: @tennhom):", reply_markup=types.ReplyKeyboardRemove())
 
+    elif text == "➖ Xóa Nhóm" and uid_int in ADMIN_CHINH:
+        admin_states[uid_int] = "WAIT_DEL_GROUP"
+        bot.send_message(uid_int, "Nhập chính xác Username cần xoá:", reply_markup=types.ReplyKeyboardRemove())
+
+    elif text == "📢 Gửi Thông Báo" and uid_int in ADMIN_CHINH:
+        admin_states[uid_int] = "WAIT_BROADCAST"
+        bot.send_message(uid_int, "Nhập nội dung thông báo:", reply_markup=types.ReplyKeyboardRemove())
+
+    elif text == "➕ Thêm Clone" and (uid_int in ADMIN_CHINH or uid_int in ADMIN_PHU):
+        admin_states[uid_int] = "WAIT_PHONE"
+        bot.send_message(uid_int, "📱 Nhập SĐT (VD: 849xxx):", reply_markup=types.ReplyKeyboardMarkup(resize_keyboard=True).add("❌ Huỷ"))
+
+    elif text == "📱 Dàn Clone":
+        msg = "📱 Workers: " + ", ".join(ACCS.keys()) if ACCS else "Chưa có clone."
+        bot.send_message(uid_int, msg)
+
+    elif text == "👥 Danh Sách Mem" and (uid_int in ADMIN_CHINH or uid_int in ADMIN_PHU):
+        bot.send_message(uid_int, f"👥 Tổng mem: `{len(db['users'])}`")
+
+    elif text == "🔙 Quay Lại Admin": bot.send_message(uid_int, "Menu Admin", reply_markup=admin_panel_menu(uid_int))
+    elif text == "🔙 Quay Lại": bot.send_message(uid_int, "Menu Chính", reply_markup=main_menu(uid_int))
+
+# ==========================================
+# 6. RUN
+# ==========================================
 if __name__ == "__main__":
-    threading.Thread(target=run_web_server, daemon=True).start()
-    threading.Thread(target=auto_bank, daemon=True).start()
+    t = Thread(target=lambda: (asyncio.set_event_loop(telethon_loop), telethon_loop.run_until_complete(load_sessions()), telethon_loop.run_forever()))
+    t.start()
+    app = Flask('')
+    @app.route('/')
+    def home(): return "Bot Live"
+    Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
+    print("🚀 BOT ĐÃ SẴN SÀNG!")
     bot.infinity_polling()
-        
+                    
